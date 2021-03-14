@@ -3,27 +3,27 @@
  *
  *
  ****************************************************************************
- *          CUDA LZSS 
+ *          CUDA LZSS
  *   Authors  : Adnan Ozsoy, Martin Swany,Indiana University - Bloomington
  *   Date    : April 11, 2011
- 
+
  ****************************************************************************
- 
+
          Copyright 2011 Adnan Ozsoy, Martin Swany, Indiana University - Bloomington
- 
+
          Licensed under the Apache License, Version 2.0 (the "License");
          you may not use this file except in compliance with the License.
          You may obtain a copy of the License at
- 
+
      http://www.apache.org/licenses/LICENSE-2.0
- 
+
          Unless required by applicable law or agreed to in writing, software
          distributed under the License is distributed on an "AS IS" BASIS,
          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
          See the License for the specific language governing permissions and
          limitations under the License.
  ****************************************************************************/
- 
+
  /***************************************************************************
  * Code is adopted from below source
  *
@@ -53,15 +53,15 @@
 #include "deculzss.h"
 #include <sys/time.h>
 
-pthread_t congpu, concpu;
+__attribute__((weak)) pthread_t congpu, concpu;
 
-extern unsigned char * decompressed_buffer; 
+extern unsigned char * decompressed_buffer;
 
 //int loopnum=0;
 int bsize = 0;
 int nchunks = 0;
 int paddingsize = 0;
-char * outfile;
+__attribute__((weak)) char * outfile;
 
 void *degpu_consumer (void *q)
 {
@@ -74,23 +74,23 @@ void *degpu_consumer (void *q)
 	int success=0;
 	fifo = (dequeue *)q;
 	int decomp_length=0;
-	
+
 	fifo->in_d = deinitGPUmem((int)bsize);
 	fifo->out_d = deinitGPUmem((int)bsize*2);
-	
-	
+
+
 	for (i = 0; i < nchunks; i++) {
-		
-		//gettimeofday(&t1_start,0);	
-	
+
+		//gettimeofday(&t1_start,0);
+
 		pthread_mutex_lock (fifo->mut);
 		while (fifo->ledger[fifo->headGW]!=1) {
 			//printf ("gpu consumer: dequeue .\n");
 			pthread_cond_wait (fifo->rcvd, fifo->mut);
 		}
 		pthread_mutex_unlock (fifo->mut);
-		
-		
+
+
 		if(fifo->compsize[fifo->headGW] == bsize)
 			;//printf("dont do anything %d\n",i);
 		else
@@ -98,9 +98,9 @@ void *degpu_consumer (void *q)
 			success=decompression_kernel_wrapper(fifo->buf[fifo->headGW], fifo->compsize[fifo->headGW]/*recvd size*/, &decomp_length, 0, 1, 1);
 			if(!success || decomp_length!=bsize){
 				printf("Decompression failed. Success %d\n",success);
-			}	
+			}
 		}
-				
+
 		pthread_mutex_lock (fifo->mut);
 		fifo->ledger[fifo->headGW]++;
 		fifo->headGW++;
@@ -108,14 +108,14 @@ void *degpu_consumer (void *q)
 			fifo->headGW = 0;
 
 		pthread_mutex_unlock (fifo->mut);
-		
+
 		pthread_cond_signal (fifo->decomp);
 
 		//gettimeofday(&t1_end,0);
 		//alltime = (t1_end.tv_sec-t1_start.tv_sec) + (t1_end.tv_usec - t1_start.tv_usec)/1000000.0;
 		//printf("GPU whole took:\t%f \n", alltime);
 	}
-	
+
 	dedeleteGPUmem(fifo->in_d);
 	dedeleteGPUmem(fifo->out_d);
 	/**/
@@ -131,21 +131,21 @@ void *decpu_consumer (void *q)
 
 	int i;
 	int success=0;
-	dequeue *fifo;	
+	dequeue *fifo;
 	fifo = (dequeue *)q;
 	int comp_length=0;
-	
-	
+
+
 	if(outfile!=NULL)
 		outFile = fopen(outfile, "wb");
 	else
 		outFile = fopen("decomp.dat", "wb");
-		
+
 	if(outFile == NULL)
 	{
 		printf ("Output file open error"); exit (2);
 	}
-	
+
 	for (i = 0; i < nchunks; i++) {
 
 		pthread_mutex_lock (fifo->mut);
@@ -170,7 +170,7 @@ void *decpu_consumer (void *q)
 			fifo->headWR = 0;
 
 		pthread_mutex_unlock (fifo->mut);
-		
+
 		pthread_cond_signal (fifo->wrote);
 
 	}
@@ -184,7 +184,7 @@ dequeue *dequeueInit (int size, int numchnks,int pad)
 	bsize = size;
 	nchunks = numchnks;
 	paddingsize = pad;
-	
+
 	dequeue *q;
 
 	q = (dequeue *)malloc (sizeof (dequeue));
@@ -194,11 +194,11 @@ dequeue *dequeueInit (int size, int numchnks,int pad)
 	//alloc bufs
 	unsigned char ** buffer;
 	unsigned char ** bufferout;
-	
+
 	for(i=0;i<NUMBUF;i++)
 		q->compsize[i]=0;
-		
-	
+
+
 	/*  allocate storage for an array of pointers */
 	buffer = (unsigned char **)malloc((NUMBUF) * sizeof(unsigned char *));
 	if (buffer == NULL) {
@@ -212,7 +212,7 @@ dequeue *dequeueInit (int size, int numchnks,int pad)
 	}
 	//DONT HAVE TO ALLOCATE MEM
 	//IT IS GIVEN BY THE PROGRAM ANYWAYS
-	  
+
 	/* for each pointer, allocate storage for an array of chars */
 	for (i = 0; i < (NUMBUF); i++) {
 		buffer[i] = (unsigned char *)malloc(bsize * sizeof(unsigned char));
@@ -222,14 +222,14 @@ dequeue *dequeueInit (int size, int numchnks,int pad)
 		bufferout[i] = (unsigned char *)malloc(bsize * 2 * sizeof(unsigned char));
 		if (bufferout[i] == NULL) {printf ("Memory error, bufferout"); exit (2);}
 	}
-	
+
 	q->buf = buffer;
 	q->bufout = bufferout;
-	
+
 	q->headRG = 0;
 	q->headGW = 0;
 	q->headWR = 0;
-	
+
 	q->ledger = (int *)malloc((NUMBUF) * sizeof(int));
 	if (q->ledger == NULL) {
 		printf("Error: malloc could not allocate q->ledger\n");
@@ -240,17 +240,17 @@ dequeue *dequeueInit (int size, int numchnks,int pad)
 	for (i = 0; i < (NUMBUF); i++) {
 		q->ledger[i] = 0;
 	}
-		
+
 	q->mut = (pthread_mutex_t *) malloc (sizeof (pthread_mutex_t));
 	pthread_mutex_init (q->mut, NULL);
-	
+
 	q->rcvd = (pthread_cond_t *) malloc (sizeof (pthread_cond_t));
 	pthread_cond_init (q->rcvd, NULL);
 	q->decomp = (pthread_cond_t *) malloc (sizeof (pthread_cond_t));
-	pthread_cond_init (q->decomp, NULL);	
+	pthread_cond_init (q->decomp, NULL);
 	q->wrote = (pthread_cond_t *) malloc (sizeof (pthread_cond_t));
 	pthread_cond_init (q->wrote, NULL);
-	
+
 	return (q);
 }
 
@@ -258,16 +258,16 @@ dequeue *dequeueInit (int size, int numchnks,int pad)
 void dequeueDelete (dequeue *q)
 {
 	pthread_mutex_destroy (q->mut);
-	free (q->mut);	
+	free (q->mut);
 	pthread_cond_destroy (q->rcvd);
 	free (q->rcvd);
 	pthread_cond_destroy (q->decomp);
-	free (q->decomp);	
+	free (q->decomp);
 	pthread_cond_destroy (q->wrote);
 	free (q->wrote);
-	free(q->bufout);	
+	free(q->bufout);
 	free(q->buf);
-	free(q->ledger);	
+	free(q->ledger);
 	free (q);
 
 }
@@ -275,13 +275,13 @@ void dequeueDelete (dequeue *q)
 
 void  init_decompression(dequeue * fifo, char * filename)
 {
-	outfile = filename; 
+	outfile = filename;
 	printf("Initializing the GPU\n");
 	deinitGPU();
 	//create consumer threades
 	pthread_create (&congpu, NULL, degpu_consumer, fifo);
 	pthread_create (&concpu, NULL, decpu_consumer, fifo);
-	
+
 	return;
 }
 
