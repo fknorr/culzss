@@ -56,8 +56,8 @@
 
 #include <pthread.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 typedef struct {
 	unsigned char ** buf;
@@ -81,8 +81,7 @@ typedef struct {
 
 
 //gpu functions
-extern int  compression_kernel_wrapper(unsigned char * buffer, int buf_length,unsigned char * compressed_buffer, int compression_type, int wsize, int numthre, int nstreams, int index,unsigned char * in_d,unsigned char * out_d);
-extern int  decompression_kernel_wrapper(unsigned char * buffer, int buf_length,unsigned char * decompressed_buffer, int * comp_length, int compression_type, int wsize, int numthre);
+extern int  compression_kernel_wrapper(unsigned char * in_host_buffer, int in_buffer_size,unsigned char * out_host_buffer, int compression_type, int wsize, int block_size, int nstreams, int stream_block_index,unsigned char * in_device_buffer,unsigned char * out_device_buffer);
 extern int aftercompression_wrapper(unsigned char * buffer, int buf_length, unsigned char * bufferout, int * comp_length);
 extern unsigned char * initGPUmem( int buf_length);
 extern unsigned char * initCPUmem( int buf_length);
@@ -100,9 +99,12 @@ queue *queueInit (int maxiterations,int numblocks,int blocksize);
 void queueDelete (queue *q);
 void queueAdd (queue *q, int in);
 
-void init_compression(queue *q,int maxiterations,int numblocks,int blocksize,char * file,unsigned int * book);
+void init_compression(queue *q,int maxiterations,int numblocks,int blocksize,void *out,unsigned int * book);
 void join_comp_threads();
 
 int getloopcount();
+
+size_t last_compressed_size();
+uint64_t last_compression_kernel_time_us();
 
 #endif

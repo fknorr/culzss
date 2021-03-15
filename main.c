@@ -55,8 +55,10 @@
 #include <sys/time.h>
 #include <string.h>
 #include <signal.h>
+#include <assert.h>
 #include "getopt.h"
 #include "decompression.h"
+#include "deculzss.h"
 
 #define MINSIZE 65536 //335544321 // //1MB size for minimum process
 #define BUFSIZE 1048576//65536 //1MB size for buffers
@@ -65,8 +67,6 @@ __attribute__((weak)) struct timeval tall_start,tall_end;
 __attribute__((weak)) double alltime_signal;
 int loopcount=0;
 __attribute__((weak)) queue *fifo;
-char * inputfilename;
-__attribute__((weak)) char * outputfilename;
 int maxiters=0;
 int padding=0;
 int numbls=0;
@@ -75,6 +75,20 @@ int totalsize=0;
 __attribute__((weak)) unsigned int * bookkeeping;
 int decomp=0;
 int buffersize =0;
+
+
+static void *in_stream;
+
+static size_t in_stream_read(void *buffer, size_t size, size_t items, size_t *cursor) {
+    assert(*cursor <= totalsize);
+    size_t remaining_items = (totalsize - *cursor) / size;
+    size_t read = items < remaining_items ? items : remaining_items;
+    memcpy(buffer, (const char*) in_stream + *cursor, read * size);
+    *cursor += read * size;
+    return read;
+}
+
+
 
 // Define the function to be called when ctrl-c (SIGINT) signal is sent to process
 void signal_callback_handler(int signum)
@@ -98,16 +112,13 @@ void *producer (void *q)
 	struct timeval t1_start,t1_end;
 	double alltime;
 
-    FILE *inFile;//, *outFile, *decFile;  /* input & output files */
-	inFile = NULL;
 	queue *fifo;
 	int i;
 
+	size_t in_stream_cursor = 0;
+
 	//read file into memory
 	fifo = (queue *)q;
-	if ((inFile = fopen(inputfilename, "rb")) == NULL){
-		printf ("Memory error, temp"); exit (2);
-	}
 
 	for (i = 0; i < maxiters; i++) {
 
@@ -119,7 +130,7 @@ void *producer (void *q)
 			pthread_cond_wait (fifo->sent, fifo->mut);
 		}
 
-		int result = fread (fifo->buf[fifo->headPG],1,blsize,inFile);
+		int result = in_stream_read (fifo->buf[fifo->headPG],1,blsize,&in_stream_cursor);
 		if (result != blsize )
 		{
 			if(i!=maxiters-1)
@@ -141,7 +152,6 @@ void *producer (void *q)
 		gettimeofday(&t1_end,0);
 		alltime = (t1_end.tv_sec-t1_start.tv_sec) + (t1_end.tv_usec - t1_start.tv_usec)/1000000.0;
 	}
-	fclose(inFile);
 
 	return (NULL);
 }
@@ -156,6 +166,8 @@ int main (int argc, char* argv[])
 	numbls = 4;
 	maxiters = 0;
 
+	const char *inputfilename;
+    const char *outputfilename;
 	/* parse command line */
 	while ((opt = getopt(argc, argv, "i:o:d:h:")) != -1)
     {
@@ -177,7 +189,7 @@ int main (int argc, char* argv[])
 		case 'h':       /* help */
                 printf(" Usage for compression: ./main -i {inputfile} -o {outputfile}\n");
                 printf(" Usage for decompression: ./main -d 1 -i {inputfile} -o {outputfile}\n");
-                return;
+                return 0;
 
 		// case 'b':       /* buf size */
                 // buffersize = atoi(optarg);
@@ -191,14 +203,20 @@ int main (int argc, char* argv[])
     {
 		printf(" Usage for compression: ./main -i {inputfile} -o {outputfile}\n");
         printf(" Usage for decompression: ./main -d 1 -i {inputfile} -o {outputfile}\n");
-        return;
+        return 0;
 	}
 
 	if ((filein = fopen(inputfilename, "rb")) == NULL){
 		printf ("File reading error"); exit (2);
 	}
 	fseek(filein , 0 , SEEK_END);
-	totalsize = ftell (filein);
+	totalsize = ftell(filein);
+
+    in_stream = malloc(totalsize);
+    if (!in_stream) { perror("malloc"); abort(); }
+    if (fseek(filein , 0 , SEEK_SET) != 0) { perror("fseek"); abort(); }
+    if (fread(in_stream, totalsize, 1, filein) != 1) { perror("fread"); abort(); }
+
 	fclose(filein);
 
 	//if (buffersize==0)
@@ -209,7 +227,11 @@ int main (int argc, char* argv[])
 		printf("Doing decompression\n");
 		gettimeofday(&tall_start,0);
 
-		decompression(inputfilename,buffersize,outputfilename);
+        void *out = malloc(10 * totalsize);
+        if (!out) { perror("malloc"); abort(); }
+
+		uint64_t kernel_ms;
+		decompression(in_stream,totalsize,buffersize,out,&kernel_ms);
 
 		gettimeofday(&tall_end,0);
 		alltime = (tall_end.tv_sec-tall_start.tv_sec) + (tall_end.tv_usec - tall_start.tv_usec)/1000000.0;
@@ -218,65 +240,81 @@ int main (int argc, char* argv[])
 		int sizeinmb= totalsize / (1024*1024);
 
 		printf("\tThroughput for  %dMB is :\t%lfMbps \n", sizeinmb, (sizeinmb*8)/alltime);
-		return;
+
+        printf("\tKernel time %g ms: %gMbps\n", last_decompression_kernel_time_us() * 1e-3,
+            (sizeinmb * 8) / (last_decompression_kernel_time_us() * 1e-6));
+
+        FILE *outFile = fopen(outputfilename, "wb");
+        if (!outFile) { perror("fopen"); abort(); }
+
+        if (fwrite(out, last_decompressed_size(), 1, outFile) != 1) { perror("fwrite"); abort(); }
+        fclose(outFile);
+        return 0;
 	}
 
+    void *out = malloc(2 * totalsize);
+    if (!out) { perror("malloc"); abort(); }
 
-	printf("file size:%d",totalsize);
-	//decide buf sizes
+    printf("file size:%d", totalsize);
+    //decide buf sizes
 
-	if(totalsize < BUFSIZE)
-	{
-		printf(", too small to benefit from GPU\n");
-		return;
-	}
-	else
+    if (totalsize < BUFSIZE) {
+        printf(", too small to benefit from GPU\n");
+        return 0;
+    } else {
+        maxiters = totalsize / buffersize + (((totalsize % buffersize) > 0) ? 1 : 0);
+        padding = totalsize % buffersize;
+        padding = (padding) ? (buffersize - padding) : 0;
+        blsize = buffersize;
+    }
+    printf(" eachblock_size:%d num_of_blocks:%d padding:%d \n", blsize, maxiters, padding);
 
-	{
-		maxiters = totalsize / buffersize + (((totalsize % buffersize) > 0)?1:0);
-		padding = totalsize % buffersize;
-		padding = (padding)?(buffersize-padding):0;
-		blsize = buffersize;
-	}
-	printf(" eachblock_size:%d num_of_blocks:%d padding:%d \n",blsize,maxiters, padding);
+    bookkeeping = (unsigned int *) malloc(
+        sizeof(int) * (maxiters + 2)); //# of blocks, each block size, padding size
+    bookkeeping[0] = maxiters;
+    bookkeeping[1] = padding;
 
-	bookkeeping = (unsigned int * )malloc(sizeof(int)*(maxiters+2)); //# of blocks, each block size, padding size
-	bookkeeping[0] = maxiters;
-	bookkeeping[1] = padding;
-
-	gettimeofday(&tall_start,0);
+    gettimeofday(&tall_start, 0);
 
 
-	pthread_t pro;
+    pthread_t pro;
 
-	fifo = queueInit (maxiters,numbls,blsize);
-	if (fifo ==  NULL) {
-		fprintf (stderr, "main: Queue Init failed.\n");
-		exit (1);
-	}
+    fifo = queueInit(maxiters, numbls, blsize);
+    if (fifo == NULL) {
+        fprintf(stderr, "main: Queue Init failed.\n");
+        exit(1);
+    }
 
-	//init compression threads
-	init_compression(fifo,maxiters,numbls,blsize,outputfilename,bookkeeping);
+    //init compression threads
+    uint64_t kernel_ms;
+    init_compression(fifo, maxiters, numbls, blsize, out, bookkeeping);
 
-	//create producer
-	pthread_create (&pro, NULL, producer, fifo);
+    //create producer
+    pthread_create(&pro, NULL, producer, fifo);
 
-	//join all
-	join_comp_threads();
-	//join producer
-	pthread_join (pro, NULL);
-	queueDelete (fifo);
+    //join all
+    join_comp_threads();
+    //join producer
+    pthread_join(pro, NULL);
+    queueDelete(fifo);
 
-	gettimeofday(&tall_end,0);
-	alltime = (tall_end.tv_sec-tall_start.tv_sec) + (tall_end.tv_usec - tall_start.tv_usec)/1000000.0;
-	printf("\tAll the time took:\t%f \n", alltime);
-	int sizeinmb= totalsize / (1024*1024);
-	printf("\tThroughput for %d runs of %dMB is :\t%lfMbps \n", maxiters,sizeinmb, (sizeinmb*8)/alltime);
+    gettimeofday(&tall_end, 0);
+    alltime = (tall_end.tv_sec - tall_start.tv_sec) + (tall_end.tv_usec - tall_start.tv_usec) / 1000000.0;
+    printf("\tAll the time took:\t%f \n", alltime);
+    int sizeinmb = totalsize / (1024 * 1024);
+    printf("\tThroughput for %d runs of %dMB is :\t%lfMbps \n", maxiters, sizeinmb, (sizeinmb * 8) / alltime);
 
-	free(bookkeeping);
-	//exit
-	return 0;
+    printf("\tKernel time %g ms: %gMbps\n", last_compression_kernel_time_us() * 1e-3,
+        (sizeinmb * 8) / (last_compression_kernel_time_us() * 1e-6));
 
+    FILE *outFile = fopen(outputfilename, "wb");
+    if (!outFile) { perror("fopen"); abort(); }
+
+    if (fwrite(out, last_compressed_size(), 1, outFile) != 1) { perror("fwrite"); abort(); }
+    fclose(outFile);
+
+    free(bookkeeping);
+    //exit
 }
 
 

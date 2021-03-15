@@ -50,6 +50,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 #include "deculzss.h"
 #include <sys/time.h>
 
@@ -61,7 +62,20 @@ extern unsigned char * decompressed_buffer;
 int bsize = 0;
 int nchunks = 0;
 int paddingsize = 0;
-__attribute__((weak)) char * outfile;
+static void *out_stream;
+static uint64_t kernel_time_us;
+static size_t out_stream_cursor = 0;
+
+static size_t out_stream_write(const void *buffer, size_t size, size_t items) {
+    memcpy((char*) out_stream + out_stream_cursor, buffer, size * items);
+    out_stream_cursor += size * items;
+    return items;
+}
+
+struct CUevent_st;
+void gpu_bench_start(struct CUevent_st **begin, struct CUevent_st **end);
+uint64_t gpu_bench_finish(struct CUevent_st *begin, struct CUevent_st *end);
+
 
 void *degpu_consumer (void *q)
 {
@@ -78,6 +92,7 @@ void *degpu_consumer (void *q)
 	fifo->in_d = deinitGPUmem((int)bsize);
 	fifo->out_d = deinitGPUmem((int)bsize*2);
 
+	kernel_time_us = 0;
 
 	for (i = 0; i < nchunks; i++) {
 
@@ -95,7 +110,9 @@ void *degpu_consumer (void *q)
 			;//printf("dont do anything %d\n",i);
 		else
 		{
-			success=decompression_kernel_wrapper(fifo->buf[fifo->headGW], fifo->compsize[fifo->headGW]/*recvd size*/, &decomp_length, 0, 1, 1);
+		    uint64_t this_kernel_time_us;
+			success=decompression_kernel_wrapper(fifo->buf[fifo->headGW], fifo->compsize[fifo->headGW]/*recvd size*/, &decomp_length, 0, 1, 1, &this_kernel_time_us);
+			kernel_time_us += this_kernel_time_us;
 			if(!success || decomp_length!=bsize){
 				printf("Decompression failed. Success %d\n",success);
 			}
@@ -116,6 +133,7 @@ void *degpu_consumer (void *q)
 		//printf("GPU whole took:\t%f \n", alltime);
 	}
 
+
 	dedeleteGPUmem(fifo->in_d);
 	dedeleteGPUmem(fifo->out_d);
 	/**/
@@ -124,8 +142,6 @@ void *degpu_consumer (void *q)
 
 void *decpu_consumer (void *q)
 {
-	FILE *outFile;
-
 	// struct timeval t1_start,t1_end,t2_start,t2_end;
 	// double time_d, alltime;
 
@@ -135,16 +151,7 @@ void *decpu_consumer (void *q)
 	fifo = (dequeue *)q;
 	int comp_length=0;
 
-
-	if(outfile!=NULL)
-		outFile = fopen(outfile, "wb");
-	else
-		outFile = fopen("decomp.dat", "wb");
-
-	if(outFile == NULL)
-	{
-		printf ("Output file open error"); exit (2);
-	}
+	out_stream_cursor = 0;
 
 	for (i = 0; i < nchunks; i++) {
 
@@ -158,9 +165,9 @@ void *decpu_consumer (void *q)
 		// WRITE to FILE
 		//
 		if(i == nchunks-1 && paddingsize>0)
-			fwrite(fifo->buf[fifo->headWR],bsize-paddingsize/*comp_length*/, 1, outFile);
+			out_stream_write(fifo->buf[fifo->headWR],bsize-paddingsize/*comp_length*/, 1);
 		else
-			fwrite(fifo->buf[fifo->headWR],bsize/*comp_length*/, 1, outFile);
+			out_stream_write(fifo->buf[fifo->headWR],bsize/*comp_length*/, 1);
 
 
 		pthread_mutex_lock (fifo->mut);
@@ -174,7 +181,6 @@ void *decpu_consumer (void *q)
 		pthread_cond_signal (fifo->wrote);
 
 	}
-	fclose(outFile);
 	/**/
 	return (NULL);
 }
@@ -203,12 +209,12 @@ dequeue *dequeueInit (int size, int numchnks,int pad)
 	buffer = (unsigned char **)malloc((NUMBUF) * sizeof(unsigned char *));
 	if (buffer == NULL) {
 		printf("Error: malloc could not allocate buffer\n");
-		return;
+        abort();
 	}
 	bufferout = (unsigned char **)malloc((NUMBUF) * sizeof(unsigned char *));
 	if (bufferout == NULL) {
 		printf("Error: malloc could not allocate bufferout\n");
-		return;
+        abort();
 	}
 	//DONT HAVE TO ALLOCATE MEM
 	//IT IS GIVEN BY THE PROGRAM ANYWAYS
@@ -233,7 +239,7 @@ dequeue *dequeueInit (int size, int numchnks,int pad)
 	q->ledger = (int *)malloc((NUMBUF) * sizeof(int));
 	if (q->ledger == NULL) {
 		printf("Error: malloc could not allocate q->ledger\n");
-		return;
+        abort();
 	}
 
 	/* for each initialize */
@@ -273,9 +279,9 @@ void dequeueDelete (dequeue *q)
 }
 
 
-void  init_decompression(dequeue * fifo, char * filename)
+void  init_decompression(dequeue * fifo, void *out)
 {
-	outfile = filename;
+	out_stream = out;
 	printf("Initializing the GPU\n");
 	deinitGPU();
 	//create consumer threades
@@ -292,11 +298,13 @@ void join_decomp_threads()
 }
 
 
+size_t last_decompressed_size()
+{
+    return out_stream_cursor;
+}
 
-
-
-
-
-
-
+uint64_t last_decompression_kernel_time_us()
+{
+    return kernel_time_us;
+}
 

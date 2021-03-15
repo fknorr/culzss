@@ -67,7 +67,25 @@
 #include <assert.h>
 #include <cuda.h>
 //#include "cuPrintf.cu"
- 
+
+
+void gpu_bench_start(CUevent_st **begin, CUevent_st **end) {
+    cudaEventCreate(begin);
+    cudaEventCreate(end);
+    cudaEventRecord(*begin, NULL);
+}
+
+uint64_t gpu_bench_finish(CUevent_st *begin, CUevent_st *end) {
+    cudaEventRecord(end, NULL);
+    float duration_ms;
+    cudaEventSynchronize(end);
+    cudaEventElapsedTime(&duration_ms, begin, end);
+    auto kernel_time_us = (uint64_t) (duration_ms * 1000);
+    cudaEventDestroy(end);
+    cudaEventDestroy(begin);
+    return kernel_time_us;
+}
+
 
 /***************************************************************************
 *                            GLOBAL VARIABLES
@@ -77,7 +95,7 @@
 //unsigned char * init_in_d;	
 //unsigned char * init_out_d;
 
-texture<unsigned char, 1, cudaReadModeElementType> in_d_tex;
+// texture<unsigned char, 1, cudaReadModeElementType> in_d_tex;
 
 cudaStream_t * streams;
 int instreams = 16;
@@ -179,7 +197,7 @@ void checkCUDAError(const char *msg)
 }
 
 
-__global__ void EncodeKernel(unsigned char * in_d, unsigned char * out_d, int SIZEBLOCK)
+__global__ void CompressBlock(unsigned char * in_d, unsigned char * out_d, int SIZEBLOCK)
 {
 
 
@@ -310,43 +328,43 @@ __global__ void EncodeKernel(unsigned char * in_d, unsigned char * out_d, int SI
 		
 	} //while
 	
-		if(lastcheck==1)
-		{
-			if(matchData.length > (MAX_CODED - tx))
-				matchData.length = MAX_CODED - tx;
-		}
-		
-		if (matchData.length >= MAX_CODED)
-        	{
-            	// garbage beyond last data happened to extend match length //
-            	matchData.length = MAX_CODED-1;
-      		}
+    if(lastcheck==1)
+    {
+        if(matchData.length > (MAX_CODED - tx))
+            matchData.length = MAX_CODED - tx;
+    }
 
-		if (matchData.length <= MAX_UNCODED)
-		{
-			// not long enough match.  write uncoded byte //
-			matchData.length = 1;   // set to 1 for 1 byte uncoded //
-			encodedData[tx*2] = 1;
-			encodedData[tx*2 + 1] = uncodedLookahead[uncodedHead];
-		}
-		else if(matchData.length > MAX_UNCODED)
-		{	
-			// match length > MAX_UNCODED.  Encode as offset and length. //
-			encodedData[tx*2] = (unsigned char)matchData.length;
-			encodedData[tx*2+1] = (unsigned char)matchData.offset;			
-		}
+    if (matchData.length >= MAX_CODED)
+        {
+            // garbage beyond last data happened to extend match length //
+            matchData.length = MAX_CODED-1;
+        }
 
-			
-		//write out the encoded data into output
-		out_d[bx * PCKTSIZE*2 + wfilepoint + tx*2] = encodedData[tx*2];
-		out_d[bx * PCKTSIZE*2 + wfilepoint + tx*2 + 1] = encodedData[tx*2+1];
-		
-		//update written pointer and heads
-		wfilepoint = wfilepoint + MAX_CODED*2;
-		
-		windowHead = (windowHead + MAX_CODED) % (WINDOW_SIZE+MAX_CODED);
-		uncodedHead = (uncodedHead + MAX_CODED) % (MAX_CODED*2);
-		
+    if (matchData.length <= MAX_UNCODED)
+    {
+        // not long enough match.  write uncoded byte //
+        matchData.length = 1;   // set to 1 for 1 byte uncoded //
+        encodedData[tx*2] = 1;
+        encodedData[tx*2 + 1] = uncodedLookahead[uncodedHead];
+    }
+    else if(matchData.length > MAX_UNCODED)
+    {
+        // match length > MAX_UNCODED.  Encode as offset and length. //
+        encodedData[tx*2] = (unsigned char)matchData.length;
+        encodedData[tx*2+1] = (unsigned char)matchData.offset;
+    }
+
+
+    //write out the encoded data into output
+    out_d[bx * PCKTSIZE*2 + wfilepoint + tx*2] = encodedData[tx*2];
+    out_d[bx * PCKTSIZE*2 + wfilepoint + tx*2 + 1] = encodedData[tx*2+1];
+
+    //update written pointer and heads
+    wfilepoint = wfilepoint + MAX_CODED*2;
+
+    windowHead = (windowHead + MAX_CODED) % (WINDOW_SIZE+MAX_CODED);
+    uncodedHead = (uncodedHead + MAX_CODED) % (MAX_CODED*2);
+
 }
 
 unsigned char * initGPUmem(int buf_length)
@@ -423,35 +441,35 @@ int onestream_finish_GPU(int index)
 	return true;
 }
 
-int compression_kernel_wrapper(unsigned char *buffer, int buf_length, unsigned char * bufferout, int compression_type,int wsize,\
-								int numthre, int noop,int index,unsigned char * in_d,unsigned char * out_d)
+int compression_kernel_wrapper(unsigned char *in_host_buffer, int in_buffer_size, unsigned char * out_host_buffer, int unused1,int unused2,\
+								int block_size, int unused3, int stream_block_index, unsigned char * in_device_buffer,unsigned char * out_device_buffer)
 {
 
-	int numThreads = numthre;
-	int numblocks = (buf_length / (PCKTSIZE*instreams)) + (((buf_length % (PCKTSIZE*instreams))>0)?1:0);
+	int num_blocks = (in_buffer_size / (PCKTSIZE*instreams)) + (((in_buffer_size % (PCKTSIZE*instreams))>0) ? 1 : 0);
 	int i=0;
 
-	cudaFuncSetCacheConfig(EncodeKernel, cudaFuncCachePreferL1);//cudaFuncCachePreferShared);
+    cudaFuncSetCacheConfig(CompressBlock, cudaFuncCachePreferL1);//cudaFuncCachePreferShared);
 
 	for(i = 0; i < instreams; i++)
 	{
 		//copy memory to cuda device
-		cudaMemcpyAsync(in_d+ i * (buf_length / instreams), buffer+ i * (buf_length / instreams), \
-						sizeof(char)*(buf_length / instreams),cudaMemcpyHostToDevice, streams[index*instreams + i]);
+		cudaMemcpyAsync(in_device_buffer+ i * (in_buffer_size / instreams), in_host_buffer+ i * (in_buffer_size / instreams), \
+						sizeof(char)*(in_buffer_size / instreams),cudaMemcpyHostToDevice, streams[stream_block_index*instreams + i]);
 		checkCUDAError("mem copy to gpu");
 	}
 	
     for(i = 0; i < instreams; i++)
 	{
-		EncodeKernel<<< numblocks, numThreads, 0, streams[index*instreams + i]>>>(in_d + i * (buf_length / instreams),\
-						out_d + 2 * i * (buf_length / instreams),numThreads);
+        CompressBlock<<< num_blocks, block_size, 0, streams[stream_block_index * instreams + i]>>>(
+            in_device_buffer + i * (in_buffer_size / instreams), \
+                        out_device_buffer + 2 * i * (in_buffer_size / instreams), block_size);
 		checkCUDAError("kernel invocation");   // Check for any CUDA errors
 	}
 	//copy memory back
 	for(i = 0; i < instreams; i++)
 	{	
-		cudaMemcpyAsync(bufferout + 2 * i * (buf_length / instreams), out_d + 2 * i * (buf_length / instreams),\
-						sizeof(char)*(buf_length / instreams)*2, cudaMemcpyDeviceToHost, streams[index*instreams + i]);
+		cudaMemcpyAsync(out_host_buffer + 2 * i * (in_buffer_size / instreams), out_device_buffer + 2 * i * (in_buffer_size / instreams),\
+						sizeof(char)*(in_buffer_size / instreams)*2, cudaMemcpyDeviceToHost, streams[stream_block_index*instreams + i]);
 		checkCUDAError("mem copy back");
 	}
 	

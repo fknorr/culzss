@@ -52,6 +52,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 /***************************************************************************
 *                                CONSTANTS
@@ -118,7 +119,11 @@ struct thread_data{
 *                                FUNCTIONS
 ***************************************************************************/
 
-extern "C" int  compression_kernel_wrapper(unsigned char *buffer, int buf_length,unsigned char * compressed_buffer, int compression_type, int wsize, int numthre, int nstreams, int index,unsigned char * in_d,unsigned char * out_d);
+struct CUevent_st;
+extern "C" void gpu_bench_start(CUevent_st **begin, CUevent_st **end);
+extern "C" uint64_t gpu_bench_finish(CUevent_st *begin, CUevent_st *end);
+
+extern "C" int  compression_kernel_wrapper(unsigned char *in_host_buffer, int in_buffer_size,unsigned char * out_host_buffer, int unused1, int unused2, int block_size, int unused3, int stream_block_index,unsigned char * in_device_buffer,unsigned char * out_device_buffer);
 extern "C" void  decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * comp_length, int compression_type, int wsize, int numthre,int index);
 extern "C" int aftercompression_wrapper(unsigned char * buffer, int buf_length, unsigned char * bufferout, int * comp_length);
 extern "C" unsigned char * initGPUmem( int buf_length);
@@ -131,6 +136,7 @@ extern "C" int streams_in_GPU();
 extern "C" int onestream_finish_GPU(int index);
 extern "C" void deleteGPUStreams();
 extern "C" void signalExitThreads();
+extern "C" uint64_t last_decompression_kernel_time_us();
 
 #endif
 

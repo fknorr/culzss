@@ -49,11 +49,9 @@
 #ifndef __DECOMPRESSION_H_
 #define __DECOMPRESSION_H_
 
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <stdint.h>
 
-
-void decompression(char * filename, int size,char * outfilename);
+void decompression(const void *in, size_t stream_size, size_t buffer_size, void *out, uint64_t *out_kernel_time_ms);
 
 #endif

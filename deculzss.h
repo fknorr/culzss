@@ -62,6 +62,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 typedef struct {
 	unsigned char ** buf;
@@ -84,7 +85,7 @@ typedef struct {
 
 //gpu functions
 //extern int  compression_kernel_wrapper(unsigned char * buffer, int buf_length,unsigned char * compressed_buffer, int compression_type, int wsize, int numthre, int nstreams, int index,unsigned char * in_d,unsigned char * out_d);
-extern int  decompression_kernel_wrapper(unsigned char * buffer, int buf_length, int * comp_length, int compression_type, int wsize, int numthre);
+extern int  decompression_kernel_wrapper(unsigned char * buffer, int buf_length, int * comp_length, int compression_type, int wsize, int numthre, uint64_t *kernel_time_us);
 //extern int writedecompression_wrapper(unsigned char * buffer, int buf_length, unsigned char * bufferout, int * comp_length);
 extern unsigned char * deinitGPUmem( int buf_length);
 extern void dedeleteGPUmem(unsigned char * mem_d);
@@ -95,8 +96,10 @@ dequeue *dequeueInit (int bufsize, int numbufs,int padding );
 void dequeueDelete (dequeue *q);
 void dequeueAdd (dequeue *q, int in);
 
-void init_decompression(dequeue * fifo, char * filename);
+void init_decompression(dequeue * fifo, void *out);
 void join_decomp_threads();
+uint64_t last_decompressed_size();
+uint64_t last_decompression_kernel_time_us();
 
 
 #endif

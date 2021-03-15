@@ -60,15 +60,28 @@ int loopnum=0;
 int maxiterations=0;
 int numblocks=0;
 int blocksize=0;
-__attribute__((weak)) char * outputfilename;
 __attribute__((weak)) unsigned int * bookkeeping;
 
-int exit_signal = 0;
+static volatile int exit_signal = 0;
+static size_t out_stream_cursor;
+static size_t compressed_size;
+static void *out_stream;
 
+static size_t out_stream_write(const void *buffer, size_t size, size_t items) {
+    memcpy((char*) out_stream + out_stream_cursor, buffer, size * items);
+    out_stream_cursor += size * items;
+    return items;
+}
 
 int getloopcount(){
 	return loopnum;
 }
+
+static uint64_t kernel_time_us;
+
+struct CUevent_st;
+void gpu_bench_start(struct CUevent_st **begin, struct CUevent_st **end);
+uint64_t gpu_bench_finish(struct CUevent_st *begin, struct CUevent_st *end);
 
 void *gpu_consumer (void *q)
 {
@@ -85,6 +98,8 @@ void *gpu_consumer (void *q)
 	fifo->in_d = initGPUmem((int)blocksize);
 	fifo->out_d = initGPUmem((int)blocksize*2);
 
+	struct CUevent_st *begin, *end;
+    gpu_bench_start(&begin, &end);
 
 	for (i = 0; i < maxiterations; i++) {
 
@@ -105,8 +120,8 @@ void *gpu_consumer (void *q)
 
 		gettimeofday(&t2_start,0);
 
-		success=compression_kernel_wrapper(fifo->buf[fifo->headGC], blocksize, fifo->bufout[fifo->headGC],
-										0, 0, 128, 0,fifo->headGC, fifo->in_d, fifo->out_d);
+		success= compression_kernel_wrapper(fifo->buf[fifo->headGC], blocksize, fifo->bufout[fifo->headGC],
+            0, 0, 128, 0, fifo->headGC, fifo->in_d, fifo->out_d);
 		if(!success){
 			printf("Compression failed. Success %d\n",success);
 		}
@@ -129,6 +144,8 @@ void *gpu_consumer (void *q)
 		alltime = (t1_end.tv_sec-t1_start.tv_sec) + (t1_end.tv_usec - t1_start.tv_usec)/1000000.0;
 		//printf("GPU whole took:\t%f \n", alltime);
 	}
+
+	kernel_time_us = gpu_bench_finish(begin, end);
 
 	deleteGPUmem(fifo->in_d);
 	deleteGPUmem(fifo->out_d);
@@ -205,19 +222,16 @@ void *cpu_sender (void *q)
 {
 	struct timeval t1_start,t1_end;//,t2_start,t2_end;
 	double  alltime;//time_d,
-	FILE *outFile;
 
 	int i;
 	int success=0;
 	queue *fifo;
 	fifo = (queue *)q;
-	if(outputfilename!=NULL)
-		outFile = fopen(outputfilename, "wb");
-	else
-		outFile = fopen("compressed.dat", "wb");
 	int size=0;
 
-	fwrite(bookkeeping, sizeof(unsigned int), maxiterations+2, outFile);
+	out_stream_cursor = 0;
+
+	out_stream_write(bookkeeping, sizeof(unsigned int), maxiterations+2);
 
 	for (i = 0; i < maxiterations; i++)
 	{
@@ -242,7 +256,7 @@ void *cpu_sender (void *q)
 			size = blocksize;
 		bookkeeping[i + 2] = size + ((i==0)?0:bookkeeping[i+1]);
 
-		fwrite(fifo->buf[fifo->headSP], size, 1, outFile);
+		out_stream_write(fifo->buf[fifo->headSP], size, 1);
 
 		//gettimeofday(&t2_end,0);
 		//time_d = (t2_end.tv_sec-t2_start.tv_sec) + (t2_end.tv_usec - t2_start.tv_usec)/1000000.0;
@@ -260,11 +274,10 @@ void *cpu_sender (void *q)
 		alltime = (t1_end.tv_sec-t1_start.tv_sec) + (t1_end.tv_usec - t1_start.tv_usec)/1000000.0;
 		loopnum++;
 	}
-	fseek ( outFile , 0 , SEEK_SET );
-	fwrite(bookkeeping, sizeof(unsigned int), maxiterations+2, outFile);
+	compressed_size = out_stream_cursor;
+	out_stream_cursor = 0;
+	out_stream_write(bookkeeping, sizeof(unsigned int), maxiterations+2);
 
-
-	fclose(outFile);
 	return (NULL);
 }
 
@@ -290,12 +303,12 @@ queue *queueInit (int maxit,int numb,int bsize)
 	buffer = (unsigned char **)malloc((numblocks) * sizeof(unsigned char *));
 	if (buffer == NULL) {
 		printf("Error: malloc could not allocate buffer\n");
-		return;
+        abort();
 	}
 	bufferout = (unsigned char **)malloc((numblocks) * sizeof(unsigned char *));
 	if (bufferout == NULL) {
 		printf("Error: malloc could not allocate bufferout\n");
-		return;
+        abort();
 	}
 
 	/* for each pointer, allocate storage for an array of chars */
@@ -323,7 +336,7 @@ queue *queueInit (int maxit,int numb,int bsize)
 	q->ledger = (int *)malloc((numblocks) * sizeof(int));
 	if (q->ledger == NULL) {
 		printf("Error: malloc could not allocate q->ledger\n");
-		return;
+        abort();
 	}
 
 	for (i = 0; i < (numblocks); i++) {
@@ -390,12 +403,12 @@ void queueDelete (queue *q)
 }
 
 
-void  init_compression(queue * fifo,int maxit,int numb,int bsize, char * filename, unsigned int * book)
+void  init_compression(queue * fifo,int maxit,int numb,int bsize, void * out, unsigned int * book)
 {
 	maxiterations=maxit;
 	numblocks=numb;
 	blocksize=bsize;
-	outputfilename = filename;
+	out_stream = out;
 	bookkeeping = book;
 	printf("Initializing the GPU\n");
 	initGPU();
@@ -403,10 +416,6 @@ void  init_compression(queue * fifo,int maxit,int numb,int bsize, char * filenam
 	pthread_create (&congpu, NULL, gpu_consumer, fifo);
 	pthread_create (&concpu, NULL, cpu_consumer, fifo);
 	pthread_create (&consend, NULL, cpu_sender, fifo);
-
-
-
-	return;
 }
 
 void join_comp_threads()
@@ -418,3 +427,13 @@ void join_comp_threads()
 }
 
 
+size_t last_compressed_size()
+{
+    return compressed_size;
+}
+
+
+uint64_t last_compression_kernel_time_us()
+{
+    return kernel_time_us;
+}

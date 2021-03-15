@@ -52,6 +52,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 /***************************************************************************
 *                                CONSTANTS
@@ -106,7 +107,7 @@ struct dethread_data{
 *                                FUNCTIONS
 ***************************************************************************/
 
-extern "C" int  decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * comp_length, int compression_type, int wsize, int numthre);
+extern "C" int  decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * comp_length, int compression_type, int wsize, int numthre, uint64_t *kernel_time_us);
 extern "C" unsigned char * deinitGPUmem( int buf_length);
 extern "C" void dedeleteGPUmem(unsigned char * mem_d);
 extern "C" void deinitGPU();

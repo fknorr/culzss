@@ -46,50 +46,49 @@
  *
  ***************************************************************************/
 
+#include "decompression.h"
 #include <pthread.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
 #include "deculzss.h"
-#include <sys/time.h>
 #include <string.h>
-#include <signal.h>
-#include <sys/socket.h>
-//#include "decompression.h"
+#include <assert.h>
 
-__attribute__((weak)) struct timeval tall_start,tall_end;
-__attribute__((weak)) double alltime_signal;
-//int loopcount=0;
-__attribute__((weak)) dequeue *fifo;
-char * inputfile;
-__attribute__((weak)) char * outfile;
+
 int bufsize=0;
 int numbufs=0;
 
+
+static const void *in_stream;
+static size_t in_stream_size;
+static void *out_stream;
+
+static size_t in_stream_read(void *buffer, size_t size, size_t items, size_t *cursor) {
+    assert(*cursor <= in_stream_size);
+    size_t remaining_items = (in_stream_size - *cursor) / size;
+    size_t read = items < remaining_items ? items : remaining_items;
+    memcpy(buffer, (const char*) in_stream + *cursor, read * size);
+    *cursor += read * size;
+    return read;
+}
+
 void *receiver (void *q)
 {
+    size_t in_stream_cursor = 0;
 
-
-    FILE *inFile;//, *outFile, *decFile;  /* input & output files */
-	inFile = NULL;
 	dequeue *fifo;
 	int i;
 
 	fifo = (dequeue *)q;
 
-
-	if ((inFile = fopen(inputfile, "rb")) == NULL)
-	{
-		printf ("Memory error, temp"); exit (2);
-	}
 	int * readsize;
 	readsize = (int *)malloc(sizeof(int)*numbufs);
 
 	int size=0;
 
-	fread (&size,sizeof(unsigned int), 1,inFile); //trash
-	fread (&size,sizeof(unsigned int), 1,inFile); //trash
-	fread (readsize,sizeof(unsigned int), numbufs,inFile);
+	in_stream_read (&size,sizeof(unsigned int), 1,&in_stream_cursor); //trash
+	in_stream_read (&size,sizeof(unsigned int), 1,&in_stream_cursor); //trash
+	in_stream_read (readsize,sizeof(unsigned int), numbufs,&in_stream_cursor);
 
 	for (i = 0; i < numbufs; i++) {
 
@@ -102,8 +101,11 @@ void *receiver (void *q)
 
 		size = (readsize[i] - ((i==0)?0:readsize[i-1]));
 
-		int result = fread (fifo->buf[fifo->headRG],1,size,inFile);
-		if (result != size) {printf ("Reading error1, read %d ",result); exit (3);}
+		int result = in_stream_read (fifo->buf[fifo->headRG],1,size,&in_stream_cursor);
+		if (result != size) {
+		    printf ("Reading error1, read %d ",result);
+		    exit (3);
+		}
 
 		fifo->compsize[fifo->headRG]=size;
 
@@ -117,42 +119,36 @@ void *receiver (void *q)
 
 
 	}
-	fclose(inFile);
 	return (NULL);
 }
 
-int decompression(char * filename, int size,char * outfilename)
+void decompression(const void *in, size_t stream_size, size_t buffer_size, void *out, uint64_t *out_kernel_time_ms)
 {
 	// gettimeofday(&tall_start,0);
 	// double alltime;
 
 	int padding=0;
-	inputfile = filename;
-	outfile = outfilename;
-	bufsize = size;
+	in_stream = in;
+	in_stream_size = stream_size;
+	out_stream = out;
+	bufsize = buffer_size;
 
-    FILE *inFile;//, *outFile, *decFile;  /* input & output files */
-	if ((inFile = fopen(inputfile, "rb")) == NULL)
-	{
-		printf ("Memory error, temp"); exit (2);
-	}
-
-	fread (&numbufs,sizeof(unsigned int), 1,inFile);
-	fread (&padding,sizeof(unsigned int), 1,inFile);
-	fclose(inFile);
+    size_t in_stream_cursor = 0;
+	in_stream_read (&numbufs,sizeof(unsigned int), 1,&in_stream_cursor);
+	in_stream_read (&padding,sizeof(unsigned int), 1,&in_stream_cursor);
 
 	printf("Num bufs %d padding size %d bufsize %d\n", numbufs,padding,bufsize);
 
 	pthread_t rce;
 
-	fifo = dequeueInit (bufsize,numbufs,padding);
+	dequeue *fifo = dequeueInit (bufsize,numbufs,padding);
 	if (fifo ==  NULL) {
 		fprintf (stderr, "main: Queue Init failed.\n");
-		exit (1);
+        abort();
 	}
 
 	//init compression threads
-	init_decompression(fifo,outfile);
+	init_decompression(fifo,out_stream);
 
 	//create receiver
 	pthread_create (&rce, NULL, receiver, fifo);
@@ -166,10 +162,9 @@ int decompression(char * filename, int size,char * outfilename)
 
 	dequeueDelete (fifo);
 
-
-	//exit
-	return 0;
-
+	if (out_kernel_time_ms) {
+        *out_kernel_time_ms = last_decompression_kernel_time_us();
+	}
 }
 
 

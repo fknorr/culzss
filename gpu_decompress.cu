@@ -82,6 +82,8 @@
 *                               PROTOTYPES
 ***************************************************************************/
 
+extern "C" void gpu_bench_start(struct CUevent_st **begin, struct CUevent_st **end);
+extern "C" uint64_t gpu_bench_finish(struct CUevent_st *begin, struct CUevent_st *end);
 
 
 void decheckCUDAError(const char *msg)
@@ -244,7 +246,7 @@ __global__ void DecodeKernel(unsigned char * in_d, unsigned char * out_d, int * 
 }
 	
 
-int decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * decomp_length, int compression_type,int wsize, int numthre)
+int decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * decomp_length, int compression_type,int wsize, int numthre, uint64_t *kernel_time_us)
 {
 
 	int i,j;
@@ -320,11 +322,19 @@ int decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * de
 	decheckCUDAError("mem copy1");
 
 	//cudaPrintfInit();
-		
+
+    cudaEvent_t begin, end;
+    if (kernel_time_us) {
+        gpu_bench_start(&begin, &end);
+    }
+
 	//decompression kernel
 	DecodeKernel<<< numblocks, numThreads >>>(in_d,out_d,error_d,sizearr_d,numThreads);
-	
-	
+
+    if (kernel_time_us) {
+        *kernel_time_us = gpu_bench_finish(begin, end);
+    }
+
 	// Check for any CUDA errors
 	decheckCUDAError("kernel invocation");
 	//printf(" kernel done\n");
