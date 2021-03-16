@@ -73,8 +73,8 @@ static size_t out_stream_write(const void *buffer, size_t size, size_t items) {
 }
 
 struct CUevent_st;
-void gpu_bench_start(struct CUevent_st **begin, struct CUevent_st **end);
-uint64_t gpu_bench_finish(struct CUevent_st *begin, struct CUevent_st *end);
+void CULZSSp_gpu_bench_start(struct CUevent_st **begin, struct CUevent_st **end);
+uint64_t CULZSSp_gpu_bench_finish(struct CUevent_st *begin, struct CUevent_st *end);
 
 
 void *degpu_consumer (void *q)
@@ -89,8 +89,8 @@ void *degpu_consumer (void *q)
 	fifo = (dequeue *)q;
 	int decomp_length=0;
 
-	fifo->in_d = deinitGPUmem((int)bsize);
-	fifo->out_d = deinitGPUmem((int)bsize*2);
+	fifo->in_d = CULZSSp_deinitGPUmem((int) bsize);
+	fifo->out_d = CULZSSp_deinitGPUmem((int) bsize * 2);
 
 	kernel_time_us = 0;
 
@@ -111,7 +111,8 @@ void *degpu_consumer (void *q)
 		else
 		{
 		    uint64_t this_kernel_time_us;
-			success=decompression_kernel_wrapper(fifo->buf[fifo->headGW], fifo->compsize[fifo->headGW]/*recvd size*/, &decomp_length, 0, 1, 1, &this_kernel_time_us);
+			success= CULZSSp_decompression_kernel_wrapper(fifo->buf[fifo->headGW],
+                fifo->compsize[fifo->headGW]/*recvd size*/, &decomp_length, 0, 1, 1, &this_kernel_time_us);
 			kernel_time_us += this_kernel_time_us;
 			if(!success || decomp_length!=bsize){
 				printf("Decompression failed. Success %d\n",success);
@@ -134,8 +135,8 @@ void *degpu_consumer (void *q)
 	}
 
 
-	dedeleteGPUmem(fifo->in_d);
-	dedeleteGPUmem(fifo->out_d);
+    CULZSSp_dedeleteGPUmem(fifo->in_d);
+    CULZSSp_dedeleteGPUmem(fifo->out_d);
 	/**/
 	return (NULL);
 }
@@ -185,7 +186,7 @@ void *decpu_consumer (void *q)
 	return (NULL);
 }
 
-dequeue *dequeueInit (int size, int numchnks,int pad)
+dequeue *CULZSSp_dequeueInit (int size, int numchnks,int pad)
 {
 	bsize = size;
 	nchunks = numchnks;
@@ -261,7 +262,7 @@ dequeue *dequeueInit (int size, int numchnks,int pad)
 }
 
 
-void dequeueDelete (dequeue *q)
+void CULZSSp_dequeueDelete (dequeue *q)
 {
 	pthread_mutex_destroy (q->mut);
 	free (q->mut);
@@ -279,11 +280,11 @@ void dequeueDelete (dequeue *q)
 }
 
 
-void  init_decompression(dequeue * fifo, void *out)
+void  CULZSSp_init_decompression(dequeue * fifo, void *out)
 {
 	out_stream = out;
 	printf("Initializing the GPU\n");
-	deinitGPU();
+    CULZSSp_deinitGPU();
 	//create consumer threades
 	pthread_create (&congpu, NULL, degpu_consumer, fifo);
 	pthread_create (&concpu, NULL, decpu_consumer, fifo);
@@ -291,19 +292,19 @@ void  init_decompression(dequeue * fifo, void *out)
 	return;
 }
 
-void join_decomp_threads()
+void CULZSSp_join_decomp_threads()
 {
 	pthread_join (congpu, NULL);
 	pthread_join (concpu, NULL);
 }
 
 
-size_t last_decompressed_size()
+size_t CULZSSp_last_decompressed_size()
 {
     return out_stream_cursor;
 }
 
-uint64_t last_decompression_kernel_time_us()
+uint64_t CULZSSp_last_decompression_kernel_time_us()
 {
     return kernel_time_us;
 }

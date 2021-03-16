@@ -82,11 +82,11 @@
 *                               PROTOTYPES
 ***************************************************************************/
 
-extern "C" void gpu_bench_start(struct CUevent_st **begin, struct CUevent_st **end);
-extern "C" uint64_t gpu_bench_finish(struct CUevent_st *begin, struct CUevent_st *end);
+extern "C" void CULZSSp_gpu_bench_start(struct CUevent_st **begin, struct CUevent_st **end);
+extern "C" uint64_t CULZSSp_gpu_bench_finish(struct CUevent_st *begin, struct CUevent_st *end);
 
 
-void decheckCUDAError(const char *msg)
+static void decheckCUDAError(const char *msg)
 {
  cudaError_t err = cudaGetLastError();
  if( cudaSuccess != err) 
@@ -98,7 +98,7 @@ void decheckCUDAError(const char *msg)
 }
 
 
-unsigned char * deinitGPUmem(int buf_length)
+unsigned char * CULZSSp_deinitGPUmem(int buf_length)
 {
 	unsigned char * mem_d;
 	
@@ -108,18 +108,18 @@ unsigned char * deinitGPUmem(int buf_length)
 	return mem_d;
 }
 
-void dedeleteGPUmem(unsigned char * mem_d)
+void CULZSSp_dedeleteGPUmem(unsigned char * mem_d)
 {
 	cudaFree(mem_d);		
 }
 
-void deinitGPU()
+void CULZSSp_deinitGPU()
 {
 	cudaSetDevice(0);
 }
 
 
-__global__ void DecodeKernel(unsigned char * in_d, unsigned char * out_d, int * error_d, int * sizearr_d, int SIZEBLOCK)
+static __global__ void DecodeKernel(unsigned char * in_d, unsigned char * out_d, int * error_d, int * sizearr_d, int SIZEBLOCK)
 {
 
 	// cyclic buffer sliding window of already read characters //
@@ -246,7 +246,7 @@ __global__ void DecodeKernel(unsigned char * in_d, unsigned char * out_d, int * 
 }
 	
 
-int decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * decomp_length, int compression_type,int wsize, int numthre, uint64_t *kernel_time_us)
+int CULZSSp_decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * comp_length, int compression_type,int wsize, int numthre, uint64_t *kernel_time_us)
 {
 
 	int i,j;
@@ -325,14 +325,14 @@ int decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * de
 
     cudaEvent_t begin, end;
     if (kernel_time_us) {
-        gpu_bench_start(&begin, &end);
+        CULZSSp_gpu_bench_start(&begin, &end);
     }
 
 	//decompression kernel
 	DecodeKernel<<< numblocks, numThreads >>>(in_d,out_d,error_d,sizearr_d,numThreads);
 
     if (kernel_time_us) {
-        *kernel_time_us = gpu_bench_finish(begin, end);
+        *kernel_time_us = CULZSSp_gpu_bench_finish(begin, end);
     }
 
 	// Check for any CUDA errors
@@ -353,7 +353,7 @@ int decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * de
 	if(*error_c !=0)
 		printf("Compression took more space for some packets !!! code: %d \n", *error_c);
 
-	* decomp_length = lSize-padsize;
+	* comp_length = lSize-padsize;
 		
 	//free cuda memory
 	cudaFree(in_d);

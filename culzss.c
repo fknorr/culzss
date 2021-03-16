@@ -54,13 +54,13 @@
 #include <sys/time.h>
 #include <string.h>
 
-__attribute__((weak)) pthread_t congpu, constr, concpu, consend;
+static pthread_t congpu, constr, concpu, consend;
 
-int loopnum=0;
-int maxiterations=0;
-int numblocks=0;
-int blocksize=0;
-__attribute__((weak)) unsigned int * bookkeeping;
+static int loopnum=0;
+static int maxiterations=0;
+static int numblocks=0;
+static int blocksize=0;
+static unsigned int * bookkeeping;
 
 static volatile int exit_signal = 0;
 static size_t out_stream_cursor;
@@ -73,17 +73,17 @@ static size_t out_stream_write(const void *buffer, size_t size, size_t items) {
     return items;
 }
 
-int getloopcount(){
+int CULZSSp_getloopcount(){
 	return loopnum;
 }
 
 static uint64_t kernel_time_us;
 
 struct CUevent_st;
-void gpu_bench_start(struct CUevent_st **begin, struct CUevent_st **end);
-uint64_t gpu_bench_finish(struct CUevent_st *begin, struct CUevent_st *end);
+void CULZSSp_gpu_bench_start(struct CUevent_st **begin, struct CUevent_st **end);
+uint64_t CULZSSp_gpu_bench_finish(struct CUevent_st *begin, struct CUevent_st *end);
 
-void *gpu_consumer (void *q)
+static void *gpu_consumer (void *q)
 {
 
 	struct timeval t1_start,t1_end,t2_start,t2_end;
@@ -95,11 +95,11 @@ void *gpu_consumer (void *q)
 	fifo = (queue *)q;
 	int comp_length=0;
 
-	fifo->in_d = initGPUmem((int)blocksize);
-	fifo->out_d = initGPUmem((int)blocksize*2);
+	fifo->in_d = CULZSSp_initGPUmem((int) blocksize);
+	fifo->out_d = CULZSSp_initGPUmem((int) blocksize * 2);
 
 	struct CUevent_st *begin, *end;
-    gpu_bench_start(&begin, &end);
+    CULZSSp_gpu_bench_start(&begin, &end);
 
 	for (i = 0; i < maxiterations; i++) {
 
@@ -120,7 +120,7 @@ void *gpu_consumer (void *q)
 
 		gettimeofday(&t2_start,0);
 
-		success= compression_kernel_wrapper(fifo->buf[fifo->headGC], blocksize, fifo->bufout[fifo->headGC],
+		success= CULZSSp_compression_kernel_wrapper(fifo->buf[fifo->headGC], blocksize, fifo->bufout[fifo->headGC],
             0, 0, 128, 0, fifo->headGC, fifo->in_d, fifo->out_d);
 		if(!success){
 			printf("Compression failed. Success %d\n",success);
@@ -145,16 +145,16 @@ void *gpu_consumer (void *q)
 		//printf("GPU whole took:\t%f \n", alltime);
 	}
 
-	kernel_time_us = gpu_bench_finish(begin, end);
+	kernel_time_us = CULZSSp_gpu_bench_finish(begin, end);
 
-	deleteGPUmem(fifo->in_d);
-	deleteGPUmem(fifo->out_d);
+    CULZSSp_deleteGPUmem(fifo->in_d);
+    CULZSSp_deleteGPUmem(fifo->out_d);
 
 	return (NULL);
 }
 
 
-void *cpu_consumer (void *q)
+static void *cpu_consumer (void *q)
 {
 
 	struct timeval t1_start,t1_end,t2_start,t2_end;
@@ -184,13 +184,14 @@ void *cpu_consumer (void *q)
 		}
 		pthread_mutex_unlock (fifo->mut);
 
-		onestream_finish_GPU(fifo->headCS);
+        CULZSSp_onestream_finish_GPU(fifo->headCS);
 
 		gettimeofday(&t2_start,0);
 
 
 		memcpy (bckpbuf, fifo->buf[fifo->headCS], blocksize);
-		success=aftercompression_wrapper(fifo->buf[fifo->headCS], blocksize, fifo->bufout[fifo->headCS], &comp_length);
+		success= CULZSSp_aftercompression_wrapper(fifo->buf[fifo->headCS], blocksize, fifo->bufout[fifo->headCS],
+            &comp_length);
 		if(!success){
 			printf("After Compression failed. Success %d return size %d\n",success,comp_length);
 			fifo->outsize[fifo->headCS] = 0;
@@ -218,7 +219,7 @@ void *cpu_consumer (void *q)
 	return (NULL);
 }
 
-void *cpu_sender (void *q)
+static void *cpu_sender (void *q)
 {
 	struct timeval t1_start,t1_end;//,t2_start,t2_end;
 	double  alltime;//time_d,
@@ -283,12 +284,12 @@ void *cpu_sender (void *q)
 
 
 
-queue *queueInit (int maxit,int numb,int bsize)
+queue *CULZSSp_queueInit (int maxit,int numb,int bsize)
 {
 	queue *q;
-	maxiterations=maxit;
-	numblocks=numb;
-	blocksize=bsize;
+	maxiterations=maxiterations;
+	numblocks=numblocks;
+	blocksize=blocksize;
 
 	q = (queue *)malloc (sizeof (queue));
 	if (q == NULL) return (NULL);
@@ -314,12 +315,12 @@ queue *queueInit (int maxit,int numb,int bsize)
 	/* for each pointer, allocate storage for an array of chars */
 	for (i = 0; i < (numblocks); i++) {
 		//buffer[i] = (unsigned char *)malloc(blocksize * sizeof(unsigned char));
-		buffer[i] = (unsigned char *)initCPUmem(blocksize * sizeof(unsigned char));
+		buffer[i] = (unsigned char *) CULZSSp_initCPUmem(blocksize * sizeof(unsigned char));
 		if (buffer[i] == NULL) {printf ("Memory error, buffer"); exit (2);}
 	}
 	for (i = 0; i < (numblocks); i++) {
 		//bufferout[i] = (unsigned char *)malloc(blocksize * 2 * sizeof(unsigned char));
-		bufferout[i] = (unsigned char *)initCPUmem(blocksize * 2 * sizeof(unsigned char));
+		bufferout[i] = (unsigned char *) CULZSSp_initCPUmem(blocksize * 2 * sizeof(unsigned char));
 		if (bufferout[i] == NULL) {printf ("Memory error, bufferout"); exit (2);}
 	}
 
@@ -359,18 +360,18 @@ queue *queueInit (int maxit,int numb,int bsize)
 }
 
 
-void signalExitThreads()
+void CULZSSp_signalExitThreads()
 {
 	exit_signal++;
 	while(! (exit_signal > 3));
 }
 
 
-void queueDelete (queue *q)
+void CULZSSp_queueDelete (queue *q)
 {
 	int i =0;
 
-	signalExitThreads();
+    CULZSSp_signalExitThreads();
 
 	pthread_mutex_destroy (q->mut);
 	free (q->mut);
@@ -385,11 +386,11 @@ void queueDelete (queue *q)
 
 
 	for (i = 0; i < (numblocks); i++) {
-		deleteCPUmem(q->bufout[i]);
-		deleteCPUmem(q->buf[i]);
+        CULZSSp_deleteCPUmem(q->bufout[i]);
+        CULZSSp_deleteCPUmem(q->buf[i]);
 	}
 
-	deleteGPUStreams();
+    CULZSSp_deleteGPUStreams();
 
 	free(q->buf);
 	free(q->bufout);
@@ -398,27 +399,27 @@ void queueDelete (queue *q)
 	free (q);
 
 
-	resetGPU();
+    CULZSSp_resetGPU();
 
 }
 
 
-void  init_compression(queue * fifo,int maxit,int numb,int bsize, void * out, unsigned int * book)
+void  CULZSSp_init_compression(queue * q,int maxiterations,int numblocks,int blocksize, void * out, unsigned int * book)
 {
-	maxiterations=maxit;
-	numblocks=numb;
-	blocksize=bsize;
+	maxiterations=maxiterations;
+	numblocks=numblocks;
+	blocksize=blocksize;
 	out_stream = out;
 	bookkeeping = book;
 	printf("Initializing the GPU\n");
-	initGPU();
+    CULZSSp_initGPU();
 	//create consumer threades
-	pthread_create (&congpu, NULL, gpu_consumer, fifo);
-	pthread_create (&concpu, NULL, cpu_consumer, fifo);
-	pthread_create (&consend, NULL, cpu_sender, fifo);
+	pthread_create (&congpu, NULL, gpu_consumer, q);
+	pthread_create (&concpu, NULL, cpu_consumer, q);
+	pthread_create (&consend, NULL, cpu_sender, q);
 }
 
-void join_comp_threads()
+void CULZSSp_join_comp_threads()
 {
 	pthread_join (congpu, NULL);
 	pthread_join (concpu, NULL);
@@ -427,13 +428,13 @@ void join_comp_threads()
 }
 
 
-size_t last_compressed_size()
+size_t CULZSSp_last_compressed_size()
 {
     return compressed_size;
 }
 
 
-uint64_t last_compression_kernel_time_us()
+uint64_t CULZSSp_last_compression_kernel_time_us()
 {
     return kernel_time_us;
 }

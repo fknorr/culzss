@@ -1,5 +1,5 @@
 /***************************************************************************
- *          Lempel, Ziv, Storer, and Szymanski Encoding and Decoding on CUDA
+ *  Lempel, Ziv, Storer, and Szymanski Encoding and Decoding on CUDA
  *
  *
  ****************************************************************************
@@ -46,22 +46,28 @@
  *
  ***************************************************************************/
 
-#include "decompression.h"
+
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "deculzss.h"
+#include "culzss.h"
 #include <string.h>
 #include <assert.h>
+#include "decompression.h"
+#include "deculzss.h"
 
+#define BUFSIZE 1048576//65536 //1MB size for buffers
 
-int bufsize=0;
-int numbufs=0;
+static queue *fifo;
+static int maxiters=0;
+static int padding=0;
+static int numbls=0;
+static int blsize=0;
+static int in_stream_size=0;
+static unsigned int * bookkeeping;
 
 
 static const void *in_stream;
-static size_t in_stream_size;
-static void *out_stream;
 
 static size_t in_stream_read(void *buffer, size_t size, size_t items, size_t *cursor) {
     assert(*cursor <= in_stream_size);
@@ -72,97 +78,98 @@ static size_t in_stream_read(void *buffer, size_t size, size_t items, size_t *cu
     return read;
 }
 
-void *receiver (void *q)
-{
-    size_t in_stream_cursor = 0;
 
-	dequeue *fifo;
+static void *producer (void *q)
+{
 	int i;
 
-	fifo = (dequeue *)q;
+	size_t in_stream_cursor = 0;
 
-	int * readsize;
-	readsize = (int *)malloc(sizeof(int)*numbufs);
-
-	int size=0;
-
-	in_stream_read (&size,sizeof(unsigned int), 1,&in_stream_cursor); //trash
-	in_stream_read (&size,sizeof(unsigned int), 1,&in_stream_cursor); //trash
-	in_stream_read (readsize,sizeof(unsigned int), numbufs,&in_stream_cursor);
-
-	for (i = 0; i < numbufs; i++) {
-
+	for (i = 0; i < maxiters; i++) {
 
 		pthread_mutex_lock (fifo->mut);
-		while (fifo->ledger[fifo->headRG]!=0) {
-			//printf ("receiver: queue FULL.\n");
-			pthread_cond_wait (fifo->wrote, fifo->mut);
+		while (fifo->ledger[fifo->headPG]!=0) {
+			//printf ("producer: queue FULL.\n");
+			pthread_cond_wait (fifo->sent, fifo->mut);
 		}
 
-		size = (readsize[i] - ((i==0)?0:readsize[i-1]));
-
-		int result = in_stream_read (fifo->buf[fifo->headRG],1,size,&in_stream_cursor);
-		if (result != size) {
-		    printf ("Reading error1, read %d ",result);
-		    exit (3);
+		int result = in_stream_read (fifo->buf[fifo->headPG],1,blsize,&in_stream_cursor);
+		if (result != blsize )
+		{
+			if(i!=maxiters-1)
+			{
+				printf ("Reading error1, expected size %d, read size %d ", blsize,result);
+                abort();
+			}
 		}
 
-		fifo->compsize[fifo->headRG]=size;
-
-		fifo->ledger[fifo->headRG]++;
-		fifo->headRG++;
-		if (fifo->headRG == NUMBUF)
-			fifo->headRG = 0;
+		fifo->ledger[fifo->headPG]++;
+		fifo->headPG++;
+		if (fifo->headPG == numbls)
+			fifo->headPG = 0;
 
 		pthread_mutex_unlock (fifo->mut);
-		pthread_cond_signal (fifo->rcvd);
-
-
+		pthread_cond_signal (fifo->produced);
 	}
+
 	return (NULL);
 }
 
-void CULZSSp_decompression(const void *in, size_t stream_size, size_t buffer_size, void *out)
-{
-	// gettimeofday(&tall_start,0);
-	// double alltime;
 
-	int padding=0;
-	in_stream = in;
-	in_stream_size = stream_size;
-	out_stream = out;
-	bufsize = buffer_size;
-
-    size_t in_stream_cursor = 0;
-	in_stream_read (&numbufs,sizeof(unsigned int), 1,&in_stream_cursor);
-	in_stream_read (&padding,sizeof(unsigned int), 1,&in_stream_cursor);
-
-	printf("Num bufs %d padding size %d bufsize %d\n", numbufs,padding,bufsize);
-
-	pthread_t rce;
-
-	dequeue *fifo = CULZSSp_dequeueInit(bufsize, numbufs, padding);
-	if (fifo ==  NULL) {
-		fprintf (stderr, "main: Queue Init failed.\n");
-        abort();
-	}
-
-	//init compression threads
-    CULZSSp_init_decompression(fifo, out_stream);
-
-	//create receiver
-	pthread_create (&rce, NULL, receiver, fifo);
-	//start producing
-	//and start signaling as we go
-
-	//join all
-    CULZSSp_join_decomp_threads();
-	//join receiver
-	pthread_join (rce, NULL);
-
-    CULZSSp_dequeueDelete(fifo);
+size_t CULZSS_decompress(const void *in, size_t in_size, void *out, uint64_t *kernel_time_us) {
+    CULZSSp_decompression(in,in_size,BUFSIZE, out);
+    if (kernel_time_us) {
+        *kernel_time_us = CULZSSp_last_decompression_kernel_time_us();
+    }
+    return CULZSSp_last_decompressed_size();
 }
 
 
+size_t CULZSS_compress(const void *in, size_t in_size, void *out, uint64_t *kernel_time_us) {
+    in_stream = in;
+    in_stream_size = in_size;
 
+    if (in_stream_size < BUFSIZE) {
+        // too small to benefit from GPU
+        return in_size;
+    } else {
+        maxiters = in_stream_size / BUFSIZE + (((in_stream_size % BUFSIZE) > 0) ? 1 : 0);
+        padding = in_stream_size % BUFSIZE;
+        padding = (padding) ? (BUFSIZE - padding) : 0;
+        blsize = BUFSIZE;
+    }
+    // printf(" eachblock_size:%d num_of_blocks:%d padding:%d \n", blsize, maxiters, padding);
+
+    bookkeeping = (unsigned int *) malloc(
+        sizeof(int) * (maxiters + 2)); //# of blocks, each block size, padding size
+    bookkeeping[0] = maxiters;
+    bookkeeping[1] = padding;
+
+    pthread_t pro;
+
+    fifo = CULZSSp_queueInit(maxiters, numbls, blsize);
+    if (fifo == NULL) {
+        fprintf(stderr, "Queue Init failed.\n");
+        abort();
+    }
+
+    //init compression threads
+    CULZSSp_init_compression(fifo, maxiters, numbls, blsize, out, bookkeeping);
+
+    //create producer
+    pthread_create(&pro, NULL, producer, fifo);
+
+    //join all
+    CULZSSp_join_comp_threads();
+    //join producer
+    pthread_join(pro, NULL);
+    CULZSSp_queueDelete(fifo);
+
+    free(bookkeeping);
+
+    if (kernel_time_us) {
+        *kernel_time_us = CULZSSp_last_compression_kernel_time_us();
+    }
+    return CULZSSp_last_compressed_size();
+}
 

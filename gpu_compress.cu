@@ -69,13 +69,13 @@
 //#include "cuPrintf.cu"
 
 
-void gpu_bench_start(CUevent_st **begin, CUevent_st **end) {
+void CULZSSp_gpu_bench_start(CUevent_st **begin, CUevent_st **end) {
     cudaEventCreate(begin);
     cudaEventCreate(end);
     cudaEventRecord(*begin, NULL);
 }
 
-uint64_t gpu_bench_finish(CUevent_st *begin, CUevent_st *end) {
+uint64_t CULZSSp_gpu_bench_finish(CUevent_st *begin, CUevent_st *end) {
     cudaEventRecord(end, NULL);
     float duration_ms;
     cudaEventSynchronize(end);
@@ -97,9 +97,9 @@ uint64_t gpu_bench_finish(CUevent_st *begin, CUevent_st *end) {
 
 // texture<unsigned char, 1, cudaReadModeElementType> in_d_tex;
 
-cudaStream_t * streams;
-int instreams = 16;
-int nstreams = 4*instreams;
+static cudaStream_t * streams;
+static int instreams = 16;
+static int nstreams = 4*instreams;
 
 
 /***************************************************************************
@@ -119,7 +119,7 @@ int nstreams = 4*instreams;
 *                length of the match.  If there is no match a length of
 *                zero will be returned.
 ****************************************************************************/
-__device__ encoded_string_t FindMatch(int windowHead, int uncodedHead, unsigned char* slidingWindow, unsigned char* uncodedLookahead, \
+static __device__ encoded_string_t FindMatch(int windowHead, int uncodedHead, unsigned char* slidingWindow, unsigned char* uncodedLookahead, \
 		int tx, int bx, int wfilepoint, int lastcheck, int loadcounter)
 {
     encoded_string_t matchData;
@@ -185,7 +185,7 @@ __device__ encoded_string_t FindMatch(int windowHead, int uncodedHead, unsigned 
     return matchData;
 }
 
-void checkCUDAError(const char *msg)
+static void checkCUDAError(const char *msg)
 {
  cudaError_t err = cudaGetLastError();
  if( cudaSuccess != err) 
@@ -197,7 +197,7 @@ void checkCUDAError(const char *msg)
 }
 
 
-__global__ void CompressBlock(unsigned char * in_d, unsigned char * out_d, int SIZEBLOCK)
+static __global__ void CompressBlock(unsigned char * in_d, unsigned char * out_d, int SIZEBLOCK)
 {
 
 
@@ -367,7 +367,7 @@ __global__ void CompressBlock(unsigned char * in_d, unsigned char * out_d, int S
 
 }
 
-unsigned char * initGPUmem(int buf_length)
+unsigned char * CULZSSp_initGPUmem(int buf_length)
 {
 	unsigned char * mem_d;
 	
@@ -377,7 +377,7 @@ unsigned char * initGPUmem(int buf_length)
 	return mem_d;
 }
 
-unsigned char * initCPUmem(int buf_length)
+unsigned char * CULZSSp_initCPUmem(int buf_length)
 {
 	unsigned char * mem_d;
 	
@@ -387,27 +387,27 @@ unsigned char * initCPUmem(int buf_length)
 	return mem_d;
 }
 
-void deleteGPUmem(unsigned char * mem_d)
+void CULZSSp_deleteGPUmem(unsigned char * mem_d)
 {
 	cudaFree(mem_d);		
 }
-void deleteCPUmem(unsigned char * mem_d)
+void CULZSSp_deleteCPUmem(unsigned char * mem_d)
 {
 	cudaFreeHost(mem_d);		
-	checkCUDAError("deleteCPUmem func,cudaFreeHost");
+	checkCUDAError("CULZSSp_deleteCPUmem func,cudaFreeHost");
 
 }
 
-void deleteGPUStreams()
+void CULZSSp_deleteGPUStreams()
 {
 	for (int i = 0; i < nstreams; ++i) 
 	{
 		cudaStreamDestroy(streams[i]);	
-		checkCUDAError("deleteCPUmem func, cudaStreamDestroy" + i);
+		checkCUDAError("CULZSSp_deleteCPUmem func, cudaStreamDestroy" + i);
 	}
 }
 
-void initGPU()
+void CULZSSp_initGPU()
 {
 	//cudaDeviceReset();
 	cudaSetDevice(0);
@@ -420,17 +420,17 @@ void initGPU()
     }	
 }
 
-void resetGPU()
+void CULZSSp_resetGPU()
 {
 	cudaDeviceReset();
 }
 
-int streams_in_GPU(){
+int CULZSSp_streams_in_GPU(){
 
 	return true;
 }
 
-int onestream_finish_GPU(int index)
+int CULZSSp_onestream_finish_GPU(int index)
 {
 	//cudaStreamSynchronize(streams[(index+1)*instreams -1]);
 	int check = (index+1)*instreams-1;
@@ -441,7 +441,7 @@ int onestream_finish_GPU(int index)
 	return true;
 }
 
-int compression_kernel_wrapper(unsigned char *in_host_buffer, int in_buffer_size, unsigned char * out_host_buffer, int unused1,int unused2,\
+int CULZSSp_compression_kernel_wrapper(unsigned char *in_host_buffer, int in_buffer_size, unsigned char * out_host_buffer, int unused1,int unused2,\
 								int block_size, int unused3, int stream_block_index, unsigned char * in_device_buffer,unsigned char * out_device_buffer)
 {
 
@@ -477,7 +477,7 @@ int compression_kernel_wrapper(unsigned char *in_host_buffer, int in_buffer_size
 	return 1;
 }
 
-void *aftercomp (void *q)
+static void *aftercomp (void *q)
 {
 	aftercompdata_t * data=(aftercompdata_t *)q;
 	
@@ -584,7 +584,7 @@ void *aftercomp (void *q)
 }
 
 
-int aftercompression_wrapper(unsigned char * buffer, int buf_length, unsigned char * bufferout, int * comp_length)
+int CULZSSp_aftercompression_wrapper(unsigned char * buffer, int buf_length, unsigned char * bufferout, int * comp_length)
 {
 		
 	int comptookmore = 0;

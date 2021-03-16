@@ -81,30 +81,30 @@ typedef struct {
 
 
 //gpu functions
-extern int  compression_kernel_wrapper(unsigned char * in_host_buffer, int in_buffer_size,unsigned char * out_host_buffer, int compression_type, int wsize, int block_size, int nstreams, int stream_block_index,unsigned char * in_device_buffer,unsigned char * out_device_buffer);
-extern int aftercompression_wrapper(unsigned char * buffer, int buf_length, unsigned char * bufferout, int * comp_length);
-extern unsigned char * initGPUmem( int buf_length);
-extern unsigned char * initCPUmem( int buf_length);
-extern void deleteGPUmem(unsigned char * mem_d);
-extern void deleteCPUmem(unsigned char * mem_d);
-extern void initGPU();
-extern void resetGPU();
-extern int streams_in_GPU();
-extern int onestream_finish_GPU(int index);
-extern void deleteGPUStreams();
-extern void signalExitThreads();
+extern int  CULZSSp_compression_kernel_wrapper(unsigned char * in_host_buffer, int in_buffer_size,unsigned char * out_host_buffer, int compression_type, int wsize, int block_size, int nstreams, int stream_block_index,unsigned char * in_device_buffer,unsigned char * out_device_buffer);
+extern int CULZSSp_aftercompression_wrapper(unsigned char * buffer, int buf_length, unsigned char * bufferout, int * comp_length);
+extern unsigned char * CULZSSp_initGPUmem( int buf_length);
+extern unsigned char * CULZSSp_initCPUmem( int buf_length);
+extern void CULZSSp_deleteGPUmem(unsigned char * mem_d);
+extern void CULZSSp_deleteCPUmem(unsigned char * mem_d);
+extern void CULZSSp_initGPU();
+extern void CULZSSp_resetGPU();
+extern int CULZSSp_streams_in_GPU();
+extern int CULZSSp_onestream_finish_GPU(int index);
+extern void CULZSSp_deleteGPUStreams();
+extern void CULZSSp_signalExitThreads();
 
 //Queue functions
-queue *queueInit (int maxiterations,int numblocks,int blocksize);
-void queueDelete (queue *q);
-void queueAdd (queue *q, int in);
+queue *CULZSSp_queueInit (int maxiterations,int numblocks,int blocksize);
+void CULZSSp_queueDelete (queue *q);
+void CULZSSp_queueAdd (queue *q, int in);
 
-void init_compression(queue *q,int maxiterations,int numblocks,int blocksize,void *out,unsigned int * book);
-void join_comp_threads();
+void CULZSSp_init_compression(queue *q,int maxiterations,int numblocks,int blocksize,void *out,unsigned int * book);
+void CULZSSp_join_comp_threads();
 
-int getloopcount();
+int CULZSSp_getloopcount();
 
-size_t last_compressed_size();
-uint64_t last_compression_kernel_time_us();
+size_t CULZSSp_last_compressed_size();
+uint64_t CULZSSp_last_compression_kernel_time_us();
 
 #endif

@@ -107,9 +107,9 @@ struct dethread_data{
 *                                FUNCTIONS
 ***************************************************************************/
 
-extern "C" int  decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * comp_length, int compression_type, int wsize, int numthre, uint64_t *kernel_time_us);
-extern "C" unsigned char * deinitGPUmem( int buf_length);
-extern "C" void dedeleteGPUmem(unsigned char * mem_d);
-extern "C" void deinitGPU();
+extern "C" int  CULZSSp_decompression_kernel_wrapper(unsigned char *buffer, int buf_length, int * comp_length, int compression_type, int wsize, int numthre, uint64_t *kernel_time_us);
+extern "C" unsigned char * CULZSSp_deinitGPUmem( int buf_length);
+extern "C" void CULZSSp_dedeleteGPUmem(unsigned char * mem_d);
+extern "C" void CULZSSp_deinitGPU();
 #endif
 
